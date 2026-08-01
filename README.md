@@ -5,7 +5,7 @@
 [![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED)](https://docs.docker.com/compose/)
 [![License](https://img.shields.io/badge/license-MIT-22C55E)](LICENSE)
 
-A small, interview-ready natural-language-to-SQL sample built with .NET 10,
+A focused natural-language-to-SQL reference implementation built with .NET 10,
 PostgreSQL, Qdrant, and Ollama.
 
 SchemaRag discovers a PostgreSQL schema, retrieves the most relevant tables for
@@ -292,7 +292,7 @@ Compose configuration. Dependabot tracks NuGet, Docker, and GitHub Actions.
 - Health reporting is process liveness, not dependency readiness.
 - Docker Compose is for local demonstration, not production deployment.
 
-## Interview talking points
+## Key design decisions
 
 - RAG narrows a large schema; it does not generate SQL.
 - The LLM handles semantic translation, while the backend owns policy and access.
