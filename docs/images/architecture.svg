@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760" role="img" aria-labelledby="title description">
+  <title id="title">SchemaRag modular monolith architecture</title>
+  <desc id="description">The browser and API call application services, which use PostgreSQL, Qdrant, and Ollama through infrastructure adapters.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="1" stop-color="#101b31"/>
+    </linearGradient>
+    <linearGradient id="application" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#172554"/>
+      <stop offset="1" stop-color="#312e81"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#020617" flood-opacity="0.45"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect width="1400" height="760" rx="30" fill="url(#background)"/>
+  <text x="70" y="70" fill="#f8fafc" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="31" font-weight="700">SchemaRag modular monolith</text>
+  <text x="70" y="104" fill="#94a3b8" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="17">One deployable API, explicit boundaries, three local infrastructure dependencies</text>
+
+  <g filter="url(#shadow)" font-family="Inter,Segoe UI,Arial,sans-serif">
+    <g transform="translate(95 158)">
+      <rect width="265" height="112" rx="20" fill="#0f2942" stroke="#38bdf8" stroke-width="2"/>
+      <text x="26" y="42" fill="#e0f2fe" font-size="20" font-weight="700">Browser UI</text>
+      <text x="26" y="70" fill="#7dd3fc" font-size="15">Source and table selection</text>
+      <text x="26" y="93" fill="#7dd3fc" font-size="15">Questions and bounded results</text>
+    </g>
+    <g transform="translate(1040 158)">
+      <rect width="265" height="112" rx="20" fill="#0f2942" stroke="#38bdf8" stroke-width="2"/>
+      <text x="26" y="42" fill="#e0f2fe" font-size="20" font-weight="700">HTTP API / Swagger</text>
+      <text x="26" y="70" fill="#7dd3fc" font-size="15">Validation and Problem Details</text>
+      <text x="26" y="93" fill="#7dd3fc" font-size="15">Rate-limited endpoints</text>
+    </g>
+    <path d="M365 214 H525" stroke="#64748b" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M1035 214 H875" stroke="#64748b" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g transform="translate(525 140)">
+      <rect width="350" height="150" rx="24" fill="url(#application)" stroke="#818cf8" stroke-width="2"/>
+      <text x="28" y="42" fill="#eef2ff" font-size="21" font-weight="700">SchemaRag.Api</text>
+      <line x1="28" y1="58" x2="322" y2="58" stroke="#6366f1"/>
+      <text x="28" y="87" fill="#c7d2fe" font-size="15">Composition root and transport</text>
+      <text x="28" y="112" fill="#c7d2fe" font-size="15">Static query console</text>
+      <text x="28" y="137" fill="#c7d2fe" font-size="15">Safe public data-source descriptors</text>
+    </g>
+
+    <path d="M700 295 V342" stroke="#64748b" stroke-width="3" marker-end="url(#arrow)"/>
+    <g transform="translate(350 350)">
+      <rect width="700" height="178" rx="26" fill="#111f3a" stroke="#a78bfa" stroke-width="2"/>
+      <text x="30" y="42" fill="#f5f3ff" font-size="22" font-weight="700">SchemaRag.Application</text>
+      <text x="30" y="70" fill="#c4b5fd" font-size="15">The use-case and policy layer</text>
+      <g font-size="15" fill="#ddd6fe">
+        <rect x="30" y="96" width="145" height="48" rx="12" fill="#312e81"/>
+        <text x="102" y="126" text-anchor="middle">Schema indexing</text>
+        <rect x="192" y="96" width="145" height="48" rx="12" fill="#312e81"/>
+        <text x="264" y="126" text-anchor="middle">RAG retrieval</text>
+        <rect x="354" y="96" width="145" height="48" rx="12" fill="#312e81"/>
+        <text x="426" y="126" text-anchor="middle">SQL prompting</text>
+        <rect x="516" y="96" width="154" height="48" rx="12" fill="#4c1d3d"/>
+        <text x="593" y="126" text-anchor="middle">SQL validation</text>
+      </g>
+    </g>
+
+    <path d="M700 534 V576" stroke="#64748b" stroke-width="3" marker-end="url(#arrow)"/>
+    <text x="720" y="559" fill="#94a3b8" font-size="14">ports implemented by infrastructure</text>
+
+    <g transform="translate(75 590)">
+      <rect width="360" height="112" rx="20" fill="#052e2b" stroke="#34d399" stroke-width="2"/>
+      <text x="25" y="40" fill="#d1fae5" font-size="20" font-weight="700">PostgreSQL</text>
+      <text x="25" y="68" fill="#6ee7b7" font-size="15">EF Core demo setup + pg_catalog</text>
+      <text x="25" y="91" fill="#6ee7b7" font-size="15">Npgsql read-only execution</text>
+    </g>
+    <g transform="translate(520 590)">
+      <rect width="360" height="112" rx="20" fill="#24164a" stroke="#a78bfa" stroke-width="2"/>
+      <text x="25" y="40" fill="#ede9fe" font-size="20" font-weight="700">Qdrant</text>
+      <text x="25" y="68" fill="#c4b5fd" font-size="15">Source-scoped schema vectors</text>
+      <text x="25" y="91" fill="#c4b5fd" font-size="15">Top-k table retrieval</text>
+    </g>
+    <g transform="translate(965 590)">
+      <rect width="360" height="112" rx="20" fill="#3b2206" stroke="#f59e0b" stroke-width="2"/>
+      <text x="25" y="40" fill="#fef3c7" font-size="20" font-weight="700">Ollama</text>
+      <text x="25" y="68" fill="#fcd34d" font-size="15">Local embedding model</text>
+      <text x="25" y="91" fill="#fcd34d" font-size="15">Local chat model</text>
+    </g>
+    <path d="M560 532 L285 584" stroke="#64748b" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M700 532 V584" stroke="#64748b" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M840 532 L1115 584" stroke="#64748b" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+</svg>

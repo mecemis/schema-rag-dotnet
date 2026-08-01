@@ -1,0 +1,44 @@
+@SchemaRag_HostAddress = http://localhost:8080
+
+GET {{SchemaRag_HostAddress}}/health
+Accept: application/json
+
+###
+
+GET {{SchemaRag_HostAddress}}/api/schema
+Accept: application/json
+
+###
+
+GET {{SchemaRag_HostAddress}}/api/data-sources
+Accept: application/json
+
+###
+
+GET {{SchemaRag_HostAddress}}/api/data-sources/demo/schema
+Accept: application/json
+
+###
+
+POST {{SchemaRag_HostAddress}}/api/schema/index
+Accept: application/json
+
+###
+
+# Replace with tableId values returned by the discovery request above.
+POST {{SchemaRag_HostAddress}}/api/data-sources/demo/schema/index
+Content-Type: application/json
+
+{
+  "tableIds": ["tbl_replace_me"]
+}
+
+###
+
+POST {{SchemaRag_HostAddress}}/api/query
+Content-Type: application/json
+
+{
+  "dataSourceId": "demo",
+  "question": "Show the top 5 customers by total order amount."
+}

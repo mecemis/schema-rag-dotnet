@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A small console for testing SchemaRag natural-language PostgreSQL queries.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'">
+  <title>SchemaRag Query Console</title>
+  <link rel="stylesheet" href="/styles.css?v=20260801.2">
+  <script src="/app.js?v=20260801.2" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to query console</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="SchemaRag home">
+        <span class="brand-mark" aria-hidden="true">SR</span>
+        <span>
+          <strong>SchemaRag</strong>
+          <small>Query Console</small>
+        </span>
+      </a>
+
+      <div class="health-pill" id="health-pill" role="status" aria-live="polite">
+        <span class="health-dot" aria-hidden="true"></span>
+        <span id="health-label">Checking API</span>
+      </div>
+    </header>
+
+    <main id="main-content">
+      <section class="hero" aria-labelledby="page-title">
+        <div class="hero-copy">
+          <p class="eyebrow">LOCAL RAG · POSTGRESQL · READ ONLY</p>
+          <h1 id="page-title">Ask the database in plain English.</h1>
+          <p class="hero-description">
+            See which schemas were retrieved, inspect the generated SQL, and
+            review the bounded result set—all in one request.
+          </p>
+        </div>
+
+        <ol class="flow-card" aria-label="Query flow">
+          <li><span>01</span> Embed the question</li>
+          <li><span>02</span> Retrieve table schemas</li>
+          <li><span>03</span> Generate and validate SQL</li>
+          <li><span>04</span> Execute read-only</li>
+        </ol>
+      </section>
+
+      <section class="workspace" aria-labelledby="query-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">QUERY</p>
+            <h2 id="query-heading">What do you want to know?</h2>
+          </div>
+          <button class="button button-secondary" id="index-button" type="button">
+            Index selected tables
+          </button>
+        </div>
+
+        <div class="source-controls">
+          <div>
+            <label class="field-label" for="data-source">PostgreSQL data source</label>
+            <select id="data-source" data-testid="data-source"></select>
+          </div>
+          <button class="button button-secondary" id="discover-button" type="button">
+            Discover tables
+          </button>
+        </div>
+
+        <div class="catalog-panel" aria-live="polite">
+          <div class="catalog-heading">
+            <div>
+              <span>Discovered tables</span>
+              <small id="selection-count">0 selected</small>
+            </div>
+            <div class="catalog-actions">
+              <button id="select-all-button" type="button">Select all</button>
+              <button id="select-none-button" type="button">Select none</button>
+            </div>
+          </div>
+          <div class="catalog-tables" id="catalog-tables" data-testid="schema-selection">
+            <span class="catalog-placeholder">Loading…</span>
+          </div>
+        </div>
+
+        <form id="query-form" data-testid="query-form">
+          <label class="field-label" for="question">Natural-language database question</label>
+          <textarea
+            id="question"
+            name="question"
+            maxlength="2000"
+            required
+            rows="4"
+            placeholder="e.g. Show the top 5 customers by total order amount."
+          ></textarea>
+
+          <div class="examples" aria-label="Example questions">
+            <span>Try an example</span>
+            <button type="button" data-question="Show the top 5 customers by total order amount.">Top customers</button>
+            <button type="button" data-question="What were the monthly sales totals?">Monthly sales</button>
+            <button type="button" data-question="Which products have the lowest stock?">Lowest stock</button>
+          </div>
+
+          <div class="form-actions">
+            <p><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run</p>
+            <button class="button button-primary" id="query-button" type="submit">
+              <span>Run query</span>
+              <span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </form>
+
+        <div class="notice" id="notice" role="status" aria-live="polite" tabindex="-1" hidden></div>
+      </section>
+
+      <section class="empty-state" id="empty-state">
+        <div class="empty-icon" aria-hidden="true">SQL</div>
+        <div>
+          <h2>Results will appear here</h2>
+          <p>Run a question to inspect retrieval, generation, and execution output.</p>
+        </div>
+      </section>
+
+      <section class="results" id="results" data-testid="results" aria-labelledby="results-heading" hidden>
+        <div class="results-header">
+          <div>
+            <p class="section-kicker">RESULT</p>
+            <h2 id="results-heading" tabindex="-1">Query completed</h2>
+          </div>
+          <dl class="metrics">
+            <div>
+              <dt>Rows</dt>
+              <dd id="row-count">0</dd>
+            </div>
+            <div>
+              <dt>Execution</dt>
+              <dd id="execution-time">0 ms</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="result-block">
+          <h3>Retrieved schemas</h3>
+          <div class="schema-list" id="retrieved-tables"></div>
+        </div>
+
+        <div class="result-block sql-block">
+          <div class="result-block-heading">
+            <h3>Generated SQL</h3>
+            <button class="copy-button" id="copy-sql" type="button">Copy SQL</button>
+          </div>
+          <pre><code id="generated-sql"></code></pre>
+        </div>
+
+        <div class="result-block">
+          <div class="result-block-heading">
+            <h3>Rows</h3>
+            <span id="result-question" class="result-question"></span>
+          </div>
+          <div class="table-scroll" id="table-container" tabindex="0" aria-label="Query result rows"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>SchemaRag demo</span>
+      <span>
+        Generated SQL is validated and executed with a read-only PostgreSQL role.
+        <a href="/swagger">Open Swagger</a>
+      </span>
+    </footer>
+  </div>
+  <noscript>This console requires JavaScript. You can still test the API through <a href="/swagger">Swagger</a>.</noscript>
+</body>
+</html>

@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SchemaRag.Api/SchemaRag.Api.csproj" />
+    <Project Path="src/SchemaRag.Application/SchemaRag.Application.csproj" />
+    <Project Path="src/SchemaRag.Domain/SchemaRag.Domain.csproj" />
+    <Project Path="src/SchemaRag.Infrastructure/SchemaRag.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SchemaRag.Tests/SchemaRag.Tests.csproj" />
+  </Folder>
+</Solution>
