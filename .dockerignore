@@ -1,0 +1,17 @@
+.git
+.github
+.idea
+.vscode
+**/bin
+**/obj
+**/TestResults
+.data
+.env*
+compose*.yaml
+*.key
+*.pem
+*.pfx
+README.md
+SECURITY.md
+docs
+tests

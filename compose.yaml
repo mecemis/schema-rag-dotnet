@@ -1,0 +1,78 @@
+name: schema-rag-demo
+
+services:
+  postgres:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-schema_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-schema_rag_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}
+      APP_READONLY_PASSWORD: ${APP_READONLY_PASSWORD:?Set APP_READONLY_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ${SCHEMA_RAG_DATA_ROOT:?Set SCHEMA_RAG_DATA_ROOT in .env}/postgres:/var/lib/postgresql
+      - ./docker/postgres/init-readonly-user.sh:/docker-entrypoint-initdb.d/01-init-readonly-user.sh:ro
+    networks:
+      default:
+        aliases:
+          - schema-rag-demo-db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.2
+    ports:
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - ${SCHEMA_RAG_DATA_ROOT:?Set SCHEMA_RAG_DATA_ROOT in .env}/qdrant:/qdrant/storage
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:0.32.0
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ${SCHEMA_RAG_DATA_ROOT:?Set SCHEMA_RAG_DATA_ROOT in .env}/ollama:/root/.ollama
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      Database__SetupConnectionString: Host=schema-rag-demo-db;Port=5432;Database=${POSTGRES_DB:-schema_rag};Username=${POSTGRES_USER:-schema_rag_admin};Password=${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}
+      Database__CommandTimeoutSeconds: ${QUERY_TIMEOUT_SECONDS:-5}
+      Database__MaxRows: ${QUERY_MAX_ROWS:-100}
+      DataSources__DefaultId: demo
+      DataSources__Profiles__demo__DisplayName: Demo store
+      DataSources__Profiles__demo__ReadOnlyConnectionString: Host=schema-rag-demo-db;Port=5432;Database=${POSTGRES_DB:-schema_rag};Username=schema_rag_reader;Password=${APP_READONLY_PASSWORD:?Set APP_READONLY_PASSWORD in .env}
+      DataSources__Profiles__demo__IncludedSchemas__0: public
+      Ollama__BaseUrl: http://ollama:11434
+      Ollama__ChatModel: ${OLLAMA_CHAT_MODEL:-qwen2.5-coder:7b}
+      Ollama__EmbeddingModel: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      Ollama__EmbeddingDimensions: ${OLLAMA_EMBEDDING_DIMENSIONS:-768}
+      Ollama__RequestTimeoutSeconds: ${OLLAMA_REQUEST_TIMEOUT_SECONDS:-120}
+      Qdrant__BaseUrl: http://qdrant:6333
+      Qdrant__CollectionName: ${QDRANT_COLLECTION_NAME:-schema_documents}
+      Rag__SchemaRetrievalCount: ${SCHEMA_RETRIEVAL_COUNT:-4}
+      Rag__MaxTablesPerIndex: ${MAX_TABLES_PER_INDEX:-100}
+      Rag__EmbeddingConcurrency: ${EMBEDDING_CONCURRENCY:-4}
+    ports:
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      ollama:
+        condition: service_started
+    restart: unless-stopped

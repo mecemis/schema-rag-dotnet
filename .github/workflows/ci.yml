@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Restore local tools
+        run: dotnet tool restore
+
+      - name: Restore
+        run: dotnet restore SchemaRag.slnx
+
+      - name: Verify formatting
+        run: dotnet format SchemaRag.slnx --verify-no-changes --no-restore
+
+      - name: Build
+        run: dotnet build SchemaRag.slnx --configuration Release --no-restore
+
+      - name: Test with coverage gate
+        run: >-
+          dotnet test SchemaRag.slnx
+          --configuration Release
+          --no-build
+          --no-restore
+          /p:CollectCoverage=true
+          /p:CoverletOutputFormat=cobertura
+          /p:Include="[SchemaRag.Application]*"
+          /p:Threshold=80
+          /p:ThresholdType=line
+
+      - name: Validate Compose
+        run: docker compose --env-file .env.example config --quiet
+
+      - name: Build API container
+        run: docker compose --env-file .env.example build api

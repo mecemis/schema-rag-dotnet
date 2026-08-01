@@ -1,0 +1,9 @@
+# Optional Compose overlay for a second, server-configured PostgreSQL source.
+# Copy this file to compose.external-db.yaml, keep that local file uncommitted,
+# and provide EXTERNAL_DB_* values through .env or your secret manager.
+services:
+  api:
+    environment:
+      DataSources__Profiles__external__DisplayName: ${EXTERNAL_DB_DISPLAY_NAME:-External database}
+      DataSources__Profiles__external__ReadOnlyConnectionString: ${EXTERNAL_DB_CONNECTION_STRING:?Set EXTERNAL_DB_CONNECTION_STRING}
+      DataSources__Profiles__external__IncludedSchemas__0: ${EXTERNAL_DB_SCHEMA:-public}
