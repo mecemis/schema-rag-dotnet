@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
@@ -34,7 +33,11 @@ public sealed class QdrantSchemaVectorStore(
             return [];
         }
 
-        await EnsureCollectionAsync(embedding.Length, cancellationToken);
+        await QdrantCollection.EnsureAsync(
+            httpClient,
+            options.Value.CollectionName,
+            embedding.Length,
+            cancellationToken);
         using var response = await httpClient.PostAsJsonAsync(
             $"collections/{options.Value.CollectionName}/points/query",
             new QueryRequest(
@@ -95,7 +98,11 @@ public sealed class QdrantSchemaVectorStore(
             throw new InvalidOperationException("All schema embeddings must have the same non-zero size.");
         }
 
-        await EnsureCollectionAsync(vectorSize, cancellationToken);
+        await QdrantCollection.EnsureAsync(
+            httpClient,
+            options.Value.CollectionName,
+            vectorSize,
+            cancellationToken);
         var points = schemaVectors.Select(vector =>
             new QdrantPoint(
                 CreatePointId(dataSourceId, vector.Document.TableId),
@@ -108,7 +115,7 @@ public sealed class QdrantSchemaVectorStore(
                     vector.SchemaVersion))).ToArray();
         using var response = await httpClient.PutAsJsonAsync(
             $"collections/{options.Value.CollectionName}/points?wait=true",
-            new UpsertRequest(points),
+            new QdrantCollection.UpsertRequest<QdrantPoint>(points),
             cancellationToken);
         response.EnsureSuccessStatusCode();
         await DeleteStaleSourcePointsAsync(
@@ -124,55 +131,38 @@ public sealed class QdrantSchemaVectorStore(
     {
         using var response = await httpClient.PostAsJsonAsync(
             $"collections/{options.Value.CollectionName}/points/delete?wait=true",
-            new DeleteRequest(CreateStaleSourceFilter(dataSourceId, retainedTableIds)),
+            new QdrantCollection.DeleteRequest(
+                CreateStaleSourceFilter(dataSourceId, retainedTableIds)),
             cancellationToken);
         response.EnsureSuccessStatusCode();
     }
 
-    private async Task EnsureCollectionAsync(
-        int vectorSize,
-        CancellationToken cancellationToken)
-    {
-        using var getResponse = await httpClient.GetAsync(
-            $"collections/{options.Value.CollectionName}",
-            cancellationToken);
-
-        if (getResponse.StatusCode == HttpStatusCode.NotFound)
-        {
-            using var createResponse = await httpClient.PutAsJsonAsync(
-                $"collections/{options.Value.CollectionName}",
-                new CreateCollectionRequest(new VectorConfiguration(vectorSize, "Cosine")),
-                cancellationToken);
-            createResponse.EnsureSuccessStatusCode();
-            return;
-        }
-
-        getResponse.EnsureSuccessStatusCode();
-        var collection = await getResponse.Content.ReadFromJsonAsync<CollectionResponse>(
-            cancellationToken);
-        var existingSize = collection?.Result?.Config?.Parameters?.Vectors?.Size;
-        if (existingSize != vectorSize)
-        {
-            throw new InvalidOperationException(
-                $"Qdrant collection expects vectors of size {existingSize}; received {vectorSize}. " +
-                "Recreate the collection after changing embedding models.");
-        }
-    }
-
-    private static QdrantFilter CreateSearchFilter(
+    private static QdrantCollection.QdrantFilter CreateSearchFilter(
         string dataSourceId,
         IReadOnlyCollection<string> allowedTableIds) =>
         new([
-            new FieldCondition("dataSourceId", new MatchCondition(Value: dataSourceId)),
-            new FieldCondition("tableId", new MatchCondition(Any: allowedTableIds.ToArray()))
+            new QdrantCollection.QdrantCondition(
+                "dataSourceId",
+                new QdrantCollection.MatchCondition(Value: dataSourceId)),
+            new QdrantCollection.QdrantCondition(
+                "tableId",
+                new QdrantCollection.MatchCondition(Any: allowedTableIds.ToArray()))
         ]);
 
-    private static QdrantFilter CreateStaleSourceFilter(
+    private static QdrantCollection.QdrantFilter CreateStaleSourceFilter(
         string dataSourceId,
         IReadOnlyCollection<string> retainedTableIds) =>
         new(
-            [new FieldCondition("dataSourceId", new MatchCondition(Value: dataSourceId))],
-            [new FieldCondition("tableId", new MatchCondition(Any: retainedTableIds.ToArray()))]);
+            [
+                new QdrantCollection.QdrantCondition(
+                    "dataSourceId",
+                    new QdrantCollection.MatchCondition(Value: dataSourceId))
+            ],
+            [
+                new QdrantCollection.QdrantCondition(
+                    "tableId",
+                    new QdrantCollection.MatchCondition(Any: retainedTableIds.ToArray()))
+            ]);
 
     private static string CreatePointId(string dataSourceId, string tableId)
     {
@@ -184,12 +174,10 @@ public sealed class QdrantSchemaVectorStore(
         float[] Query,
         int Limit,
         [property: JsonPropertyName("with_payload")] bool WithPayload,
-        QdrantFilter Filter);
+        QdrantCollection.QdrantFilter Filter);
     private sealed record SearchResponse(QueryResult? Result);
     private sealed record QueryResult(IReadOnlyList<SearchPoint> Points);
     private sealed record SearchPoint(QdrantPayload? Payload);
-    private sealed record UpsertRequest(IReadOnlyList<QdrantPoint> Points);
-    private sealed record DeleteRequest(QdrantFilter Filter);
     private sealed record QdrantPoint(string Id, float[] Vector, QdrantPayload Payload);
     private sealed record QdrantPayload(
         string DataSourceId,
@@ -197,21 +185,4 @@ public sealed class QdrantSchemaVectorStore(
         string SchemaName,
         string TableName,
         string SchemaVersion);
-    private sealed record QdrantFilter(
-        IReadOnlyList<FieldCondition> Must,
-        [property: JsonPropertyName("must_not"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        IReadOnlyList<FieldCondition>? MustNot = null);
-    private sealed record FieldCondition(string Key, MatchCondition Match);
-    private sealed record MatchCondition(
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Value = null,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Any = null);
-    private sealed record CreateCollectionRequest(VectorConfiguration Vectors);
-    private sealed record VectorConfiguration(int Size, string Distance);
-    private sealed record CollectionResponse(CollectionResult Result);
-    private sealed record CollectionResult(CollectionConfig Config);
-    private sealed record CollectionConfig(CollectionParameters Params)
-    {
-        public CollectionParameters Parameters => Params;
-    }
-    private sealed record CollectionParameters(VectorConfiguration Vectors);
 }

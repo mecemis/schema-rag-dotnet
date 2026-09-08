@@ -166,6 +166,174 @@ public sealed class NaturalLanguageQueryServiceTests
         Assert.Null(executor.LastDataSourceId);
     }
 
+    [Fact]
+    public async Task AskAsync_WhenTheCacheHoldsMatchingSql_SkipsRetrievalAndTheLanguageModel()
+    {
+        var customer = CreateSchema(SalesDataSourceId, "public", "customers");
+        var cachedSql = $"SELECT name FROM {customer.QualifiedTableName} LIMIT 5";
+        var cache = new RecordingSemanticQueryCache(
+            new SemanticCacheHit(
+                "List every customer name",
+                cachedSql,
+                [customer.TableId],
+                0.97));
+        var store = new RecordingSchemaVectorStore([customer]);
+        var chat = new RecordingChatCompletionService("SELECT 1 LIMIT 1");
+        var executor = new RecordingQueryExecutor(
+            new QueryExecutionResult(
+                ["name"],
+                [new Dictionary<string, object?> { ["name"] = "Ada" }],
+                4));
+        var service = CreateService(
+            new RecordingDataSourceRegistry(CreateDataSource(SalesDataSourceId)),
+            new RecordingSchemaCatalog([customer]),
+            new RecordingEmbeddingService([0.1f, 0.2f]),
+            store,
+            chat,
+            executor,
+            semanticQueryCache: cache);
+
+        var result = await service.AskAsync(
+            SalesDataSourceId,
+            "Show customer names",
+            [customer.TableId],
+            CancellationToken.None);
+
+        Assert.Equal(0, store.SearchCallCount);
+        Assert.Equal(0, chat.CallCount);
+        Assert.Equal(cachedSql, executor.LastSql?.Value);
+        Assert.True(result.FromSemanticCache);
+        Assert.Equal(0.97, result.CacheSimilarity);
+        Assert.Equal([customer.QualifiedTableName], result.RetrievedTables);
+        Assert.Empty(cache.StoredEntries);
+    }
+
+    [Fact]
+    public async Task AskAsync_OnCacheMiss_StoresTheStatementUnderTheAllowedSchemaScope()
+    {
+        var customer = CreateSchema(SalesDataSourceId, "public", "customers");
+        var generatedSql = $"SELECT name FROM {customer.QualifiedTableName} LIMIT 5";
+        var cache = new RecordingSemanticQueryCache();
+        var service = CreateService(
+            new RecordingDataSourceRegistry(CreateDataSource(SalesDataSourceId)),
+            new RecordingSchemaCatalog([customer]),
+            new RecordingEmbeddingService([0.1f, 0.2f]),
+            new RecordingSchemaVectorStore([customer]),
+            new RecordingChatCompletionService(generatedSql),
+            new RecordingQueryExecutor(new QueryExecutionResult(["name"], [], 3)),
+            semanticQueryCache: cache);
+
+        var result = await service.AskAsync(
+            SalesDataSourceId,
+            "  Show customer names  ",
+            [customer.TableId],
+            CancellationToken.None);
+
+        var fingerprint = SemanticCacheKey.CreateSchemaFingerprint([customer]);
+        Assert.Equal(1, cache.FindCallCount);
+        Assert.Equal(fingerprint, cache.LastLookup?.SchemaFingerprint);
+        Assert.Equal([0.1f, 0.2f], Assert.IsType<float[]>(cache.LastLookup?.QuestionEmbedding));
+        var stored = Assert.Single(cache.StoredEntries);
+        Assert.Equal(SalesDataSourceId, stored.DataSourceId);
+        Assert.Equal(fingerprint, stored.SchemaFingerprint);
+        Assert.Equal("Show customer names", stored.Question);
+        Assert.Equal(generatedSql, stored.Sql);
+        Assert.Equal([customer.TableId], stored.TableIds);
+        Assert.False(result.FromSemanticCache);
+        Assert.Null(result.CacheSimilarity);
+    }
+
+    [Fact]
+    public async Task AskAsync_WhenCachedSqlNoLongerValidates_FallsBackToTheLanguageModel()
+    {
+        var customer = CreateSchema(SalesDataSourceId, "public", "customers");
+        var generatedSql = $"SELECT name FROM {customer.QualifiedTableName} LIMIT 5";
+        var cache = new RecordingSemanticQueryCache(
+            new SemanticCacheHit(
+                "Delete every customer",
+                "DROP TABLE public.customers",
+                [customer.TableId],
+                0.99));
+        var chat = new RecordingChatCompletionService(generatedSql);
+        var executor = new RecordingQueryExecutor(new QueryExecutionResult(["name"], [], 3));
+        var service = CreateService(
+            new RecordingDataSourceRegistry(CreateDataSource(SalesDataSourceId)),
+            new RecordingSchemaCatalog([customer]),
+            new RecordingEmbeddingService([0.1f]),
+            new RecordingSchemaVectorStore([customer]),
+            chat,
+            executor,
+            semanticQueryCache: cache);
+
+        var result = await service.AskAsync(
+            SalesDataSourceId,
+            "Show customer names",
+            [customer.TableId],
+            CancellationToken.None);
+
+        Assert.Equal(1, chat.CallCount);
+        Assert.Equal(generatedSql, executor.LastSql?.Value);
+        Assert.False(result.FromSemanticCache);
+    }
+
+    [Fact]
+    public async Task AskAsync_WhenCachedSqlCoversATableOutsideTheAllowList_FallsBackToTheLanguageModel()
+    {
+        var customer = CreateSchema(SalesDataSourceId, "public", "customers");
+        var order = CreateSchema(SalesDataSourceId, "public", "orders");
+        var generatedSql = $"SELECT name FROM {customer.QualifiedTableName} LIMIT 5";
+        var cache = new RecordingSemanticQueryCache(
+            new SemanticCacheHit(
+                "Show order totals",
+                $"SELECT name FROM {order.QualifiedTableName} LIMIT 5",
+                [order.TableId],
+                0.99));
+        var chat = new RecordingChatCompletionService(generatedSql);
+        var executor = new RecordingQueryExecutor(new QueryExecutionResult(["name"], [], 3));
+        var service = CreateService(
+            new RecordingDataSourceRegistry(CreateDataSource(SalesDataSourceId)),
+            new RecordingSchemaCatalog([customer, order]),
+            new RecordingEmbeddingService([0.1f]),
+            new RecordingSchemaVectorStore([customer]),
+            chat,
+            executor,
+            semanticQueryCache: cache);
+
+        var result = await service.AskAsync(
+            SalesDataSourceId,
+            "Show customer names",
+            [customer.TableId],
+            CancellationToken.None);
+
+        Assert.Equal(1, chat.CallCount);
+        Assert.Equal(generatedSql, executor.LastSql?.Value);
+        Assert.False(result.FromSemanticCache);
+    }
+
+    [Fact]
+    public async Task AskAsync_WhenTheModelReportsInsufficientContext_DoesNotCacheTheFallback()
+    {
+        var customer = CreateSchema(SalesDataSourceId, "public", "customers");
+        var cache = new RecordingSemanticQueryCache();
+        var service = CreateService(
+            new RecordingDataSourceRegistry(CreateDataSource(SalesDataSourceId)),
+            new RecordingSchemaCatalog([customer]),
+            new RecordingEmbeddingService([0.1f]),
+            new RecordingSchemaVectorStore([customer]),
+            new RecordingChatCompletionService(SqlPromptBuilder.FallbackSql),
+            new RecordingQueryExecutor(new QueryExecutionResult(["error"], [], 1)),
+            semanticQueryCache: cache);
+
+        var result = await service.AskAsync(
+            SalesDataSourceId,
+            "Show something unrelated",
+            [customer.TableId],
+            CancellationToken.None);
+
+        Assert.Equal(SqlPromptBuilder.FallbackSql, result.GeneratedSql);
+        Assert.Empty(cache.StoredEntries);
+    }
+
     private static NaturalLanguageQueryService CreateService(
         IDataSourceRegistry registry,
         ISchemaCatalog catalog,
@@ -173,13 +341,15 @@ public sealed class NaturalLanguageQueryServiceTests
         ISchemaVectorStore store,
         IChatCompletionService chat,
         IGeneratedQueryExecutor executor,
-        int retrievalCount = 4) =>
+        int retrievalCount = 4,
+        ISemanticQueryCache? semanticQueryCache = null) =>
         new(
             registry,
             catalog,
             embedding,
             store,
             chat,
+            semanticQueryCache ?? new RecordingSemanticQueryCache(),
             new SqlPromptBuilder(100),
             new SqlQueryValidator(100),
             executor,
@@ -199,6 +369,29 @@ public sealed class NaturalLanguageQueryServiceTests
             $"Business data stored in {schemaName}.{tableName}.",
             [new SchemaColumn("name", "text", "Display name.", false)],
             []);
+
+    private sealed class RecordingSemanticQueryCache(SemanticCacheHit? hit = null)
+        : ISemanticQueryCache
+    {
+        public int FindCallCount { get; private set; }
+        public SemanticCacheLookup? LastLookup { get; private set; }
+        public List<SemanticCacheEntry> StoredEntries { get; } = [];
+
+        public Task<SemanticCacheHit?> FindAsync(
+            SemanticCacheLookup lookup,
+            CancellationToken cancellationToken)
+        {
+            FindCallCount++;
+            LastLookup = lookup;
+            return Task.FromResult(hit);
+        }
+
+        public Task StoreAsync(SemanticCacheEntry entry, CancellationToken cancellationToken)
+        {
+            StoredEntries.Add(entry);
+            return Task.CompletedTask;
+        }
+    }
 
     private sealed class RecordingDataSourceRegistry(params DataSourceDescriptor[] dataSources)
         : IDataSourceRegistry

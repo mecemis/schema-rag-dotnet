@@ -63,6 +63,10 @@ services:
       Ollama__RequestTimeoutSeconds: ${OLLAMA_REQUEST_TIMEOUT_SECONDS:-120}
       Qdrant__BaseUrl: http://qdrant:6333
       Qdrant__CollectionName: ${QDRANT_COLLECTION_NAME:-schema_documents}
+      SemanticCache__Enabled: ${SEMANTIC_CACHE_ENABLED:-true}
+      SemanticCache__CollectionName: ${SEMANTIC_CACHE_COLLECTION_NAME:-semantic_query_cache}
+      SemanticCache__SimilarityThreshold: ${SEMANTIC_CACHE_SIMILARITY_THRESHOLD:-0.95}
+      SemanticCache__TimeToLiveMinutes: ${SEMANTIC_CACHE_TTL_MINUTES:-1440}
       Rag__SchemaRetrievalCount: ${SCHEMA_RETRIEVAL_COUNT:-4}
       Rag__MaxTablesPerIndex: ${MAX_TABLES_PER_INDEX:-100}
       Rag__EmbeddingConcurrency: ${EMBEDDING_CONCURRENCY:-4}

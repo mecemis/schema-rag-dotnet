@@ -12,6 +12,7 @@ public sealed class NaturalLanguageQueryService(
     IEmbeddingService embeddingService,
     ISchemaVectorStore schemaVectorStore,
     IChatCompletionService chatCompletionService,
+    ISemanticQueryCache semanticQueryCache,
     SqlPromptBuilder promptBuilder,
     SqlQueryValidator sqlValidator,
     IGeneratedQueryExecutor queryExecutor,
@@ -35,6 +36,23 @@ public sealed class NaturalLanguageQueryService(
         var allowedTableIds = allowedSchemas.Select(schema => schema.TableId).ToArray();
         var normalizedQuestion = question.Trim();
         var embedding = await embeddingService.GenerateAsync(normalizedQuestion, cancellationToken);
+        var schemaFingerprint = SemanticCacheKey.CreateSchemaFingerprint(allowedSchemas);
+        var cacheHit = await semanticQueryCache.FindAsync(
+            new SemanticCacheLookup(dataSourceId, schemaFingerprint, embedding),
+            cancellationToken);
+        var reusable = ResolveReusableSql(cacheHit, allowedSchemas);
+
+        if (reusable is not null)
+        {
+            return await ExecuteAsync(
+                dataSourceId,
+                normalizedQuestion,
+                reusable.Sql,
+                reusable.Schemas,
+                cacheHit!.Similarity,
+                cancellationToken);
+        }
+
         var retrievedSchemas = await schemaVectorStore.SearchAsync(
             dataSourceId,
             allowedTableIds,
@@ -58,10 +76,39 @@ public sealed class NaturalLanguageQueryService(
                 validation.Error ?? "Generated SQL failed validation.");
         }
 
-        var execution = await queryExecutor.ExecuteAsync(
+        var result = await ExecuteAsync(
             dataSourceId,
+            normalizedQuestion,
             validation.Sql!,
+            schemas,
+            cacheSimilarity: null,
             cancellationToken);
+
+        if (IsWorthCaching(validation.Sql!))
+        {
+            await semanticQueryCache.StoreAsync(
+                new SemanticCacheEntry(
+                    dataSourceId,
+                    schemaFingerprint,
+                    normalizedQuestion,
+                    embedding,
+                    validation.Sql!.Value,
+                    schemas.Select(schema => schema.TableId).ToArray()),
+                cancellationToken);
+        }
+
+        return result;
+    }
+
+    private async Task<NaturalLanguageQueryResult> ExecuteAsync(
+        string dataSourceId,
+        string question,
+        ValidatedSql sql,
+        IReadOnlyList<SchemaDocument> schemas,
+        double? cacheSimilarity,
+        CancellationToken cancellationToken)
+    {
+        var execution = await queryExecutor.ExecuteAsync(dataSourceId, sql, cancellationToken);
         var retrievedTables = schemas
             .Select(schema => schema.QualifiedTableName)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -69,13 +116,48 @@ public sealed class NaturalLanguageQueryService(
 
         return new NaturalLanguageQueryResult(
             dataSourceId,
-            normalizedQuestion,
+            question,
             retrievedTables,
-            validation.Sql!.Value,
+            sql.Value,
             execution.Columns,
             execution.Rows,
-            execution.ExecutionTimeMs);
+            execution.ExecutionTimeMs,
+            cacheSimilarity is not null,
+            cacheSimilarity);
     }
+
+    /// <summary>
+    /// A cached statement is only reused after it passes the same validation the
+    /// model output goes through, against schema documents rehydrated from the
+    /// catalog rather than from the cache payload. Anything that no longer holds
+    /// is treated as a miss so the model can answer again.
+    /// </summary>
+    private ReusableSql? ResolveReusableSql(
+        SemanticCacheHit? cacheHit,
+        IReadOnlyList<SchemaDocument> allowedSchemas)
+    {
+        if (cacheHit is null || cacheHit.TableIds.Count == 0)
+        {
+            return null;
+        }
+
+        var schemasById = allowedSchemas.ToDictionary(schema => schema.TableId, StringComparer.Ordinal);
+        var cachedIds = cacheHit.TableIds.Distinct(StringComparer.Ordinal).ToArray();
+        if (cachedIds.Any(tableId => !schemasById.ContainsKey(tableId)))
+        {
+            return null;
+        }
+
+        var schemas = cachedIds.Select(tableId => schemasById[tableId]).ToArray();
+        var validation = sqlValidator.Validate(cacheHit.Sql, schemas);
+
+        return validation.IsValid
+            ? new ReusableSql(validation.Sql!, schemas)
+            : null;
+    }
+
+    private static bool IsWorthCaching(ValidatedSql sql) =>
+        !string.Equals(sql.Value, SqlPromptBuilder.FallbackSql, StringComparison.Ordinal);
 
     private static IReadOnlyList<SchemaDocument> ResolveAllowedSchemas(
         IReadOnlyList<SchemaDocument> availableSchemas,
@@ -111,4 +193,6 @@ public sealed class NaturalLanguageQueryService(
 
         return selectedIds.Select(tableId => documentsById[tableId]).ToArray();
     }
+
+    private sealed record ReusableSql(ValidatedSql Sql, IReadOnlyList<SchemaDocument> Schemas);
 }

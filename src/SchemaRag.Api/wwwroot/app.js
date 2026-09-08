@@ -7,6 +7,7 @@
     emptyState: document.querySelector('#empty-state'),
     executionTime: document.querySelector('#execution-time'),
     generatedSql: document.querySelector('#generated-sql'),
+    sqlSource: document.querySelector('#sql-source'),
     healthLabel: document.querySelector('#health-label'),
     healthPill: document.querySelector('#health-pill'),
     indexButton: document.querySelector('#index-button'),
@@ -192,6 +193,16 @@
     elements.tableContainer.replaceChildren();
   }
 
+  function describeSqlSource(result) {
+    if (result.fromSemanticCache !== true) {
+      return 'model';
+    }
+
+    return typeof result.cacheSimilarity === 'number'
+      ? `cache · ${result.cacheSimilarity.toFixed(2)}`
+      : 'cache';
+  }
+
   function renderResult(result) {
     const rows = Array.isArray(result.rows) ? result.rows : [];
     const columns = Array.isArray(result.columns) ? result.columns : [];
@@ -199,6 +210,8 @@
 
     elements.rowCount.textContent = String(rows.length);
     elements.executionTime.textContent = `${result.executionTimeMs ?? 0} ms`;
+    elements.sqlSource.textContent = describeSqlSource(result);
+    elements.sqlSource.classList.toggle('cached', result.fromSemanticCache === true);
     elements.generatedSql.textContent = result.generatedSql ?? '';
     elements.resultQuestion.textContent = result.question ?? '';
     elements.retrievedTables.replaceChildren(

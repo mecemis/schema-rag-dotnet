@@ -10,7 +10,8 @@ PostgreSQL, Qdrant, and Ollama.
 
 SchemaRag discovers a PostgreSQL schema, retrieves the most relevant tables for
 a question, asks a local LLM to generate PostgreSQL, validates the generated
-statement, and executes it through a read-only connection.
+statement, and executes it through a read-only connection. A semantic cache lets
+a question that has been asked before—in any wording—skip the model entirely.
 
 ![SchemaRag query flow](docs/images/query-flow.svg)
 
@@ -19,6 +20,7 @@ statement, and executes it through a read-only connection.
 - A modular-monolith .NET backend with clear dependency boundaries.
 - Live PostgreSQL metadata discovery through `pg_catalog`.
 - Source- and table-scoped schema retrieval from Qdrant.
+- A semantic cache that reuses generated SQL across differently worded questions.
 - Local chat and embedding models through Ollama.
 - Conservative SQL validation and a `ValidatedSql` execution boundary.
 - Read-only PostgreSQL execution with timeouts and a hard row limit.
@@ -47,6 +49,42 @@ For each question, Qdrant retrieves only the most relevant three to five schema
 documents. Qdrant does **not** generate SQL: it only selects context. Ollama still
 maps the user's intent to projections, joins, filters, grouping, and ordering.
 
+## Semantic cache
+
+Retrieval and validation are cheap; the model call is not. "Show the top five
+customers by revenue" and "Who are our five biggest customers?" are different
+strings but the same request, so a plain key-value cache never matches them.
+
+SchemaRag stores each generated statement in a second Qdrant collection, keyed by
+the question embedding it already had to compute for retrieval. A new question
+whose embedding sits within `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` cosine
+similarity of a stored one reuses that SQL and skips both schema retrieval and
+the LLM.
+
+Only the statement is cached, never result rows, so answers always reflect
+current data. Reuse is deliberately narrow:
+
+- entries are scoped to a data source and a **schema fingerprint**—a hash over the
+  table allow-list and the column layout of every table in it, so re-indexing a
+  changed schema retires the affected entries with no invalidation step;
+- a cached statement is re-validated against schema documents rehydrated from the
+  live catalog before it executes, exactly as model output is, and a statement
+  that no longer validates falls through to the model;
+- the `INSUFFICIENT_SCHEMA_CONTEXT` fallback is never cached; and
+- entries stop matching after `SEMANTIC_CACHE_TTL_MINUTES` and are pruned on the
+  next write.
+
+The cache is an optimisation, not a dependency. When Qdrant is unreachable the
+lookup reports a miss and the write is dropped with a logged warning, so queries
+still answer through the model. Set `SEMANTIC_CACHE_ENABLED=false` to swap in a
+no-op implementation.
+
+Responses report which path answered:
+
+```json
+{ "fromSemanticCache": true, "cacheSimilarity": 0.97 }
+```
+
 ## Architecture
 
 ![SchemaRag architecture](docs/images/architecture.svg)
@@ -55,11 +93,14 @@ The request path is deliberately linear:
 
 1. Discover live table metadata from a configured PostgreSQL source.
 2. Embed and index the selected schema documents in Qdrant.
-3. Embed the user's question and retrieve the closest schema documents.
-4. Build a prompt from the question and retrieved schema context.
-5. Ask Ollama for one PostgreSQL query.
-6. Validate its shape, keywords, referenced tables, and row limit.
-7. Execute it in a read-only transaction and return bounded results.
+3. Embed the user's question.
+4. Look for a semantically equivalent question in the cache; on a hit, jump to
+   step 7 with the stored statement.
+5. Retrieve the closest schema documents and build a prompt from them.
+6. Ask Ollama for one PostgreSQL query.
+7. Validate its shape, keywords, referenced tables, and row limit.
+8. Execute it in a read-only transaction and return bounded results.
+9. On a cache miss, store the validated statement for the next equivalent question.
 
 Project responsibilities:
 
@@ -162,7 +203,9 @@ Representative response—the exact SQL can vary by model:
   "generatedSql": "SELECT ... LIMIT 5",
   "columns": ["customer_name", "total_amount"],
   "rows": [],
-  "executionTimeMs": 20
+  "executionTimeMs": 20,
+  "fromSemanticCache": false,
+  "cacheSimilarity": null
 }
 ```
 
@@ -214,6 +257,8 @@ Generated SQL is always untrusted. SchemaRag uses several independent controls:
 - data-source credentials exist only in server configuration;
 - Qdrant retrieval is scoped by source and selected table IDs;
 - retrieved metadata is rehydrated from the live catalog and version-checked;
+- cached SQL is treated as untrusted input and re-validated against the current
+  allow-list before every reuse;
 - the prompt requests one PostgreSQL `SELECT`/read-only CTE and a bounded limit;
 - validation rejects comments, multiple statements, writes, DDL, permission
   changes, system schemas, dangerous functions, row locks, and unknown tables;
@@ -246,6 +291,10 @@ Important `.env` settings:
 | `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
 | `OLLAMA_EMBEDDING_DIMENSIONS` | `768` | Qdrant vector dimension |
 | `QDRANT_COLLECTION_NAME` | `schema_documents` | Schema collection |
+| `SEMANTIC_CACHE_ENABLED` | `true` | Reuse generated SQL across equivalent questions |
+| `SEMANTIC_CACHE_COLLECTION_NAME` | `semantic_query_cache` | Cache collection; must differ from the schema collection |
+| `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` | `0.95` | Minimum cosine similarity before SQL is reused |
+| `SEMANTIC_CACHE_TTL_MINUTES` | `1440` | Entry lifetime; `0` keeps entries until the schema changes |
 
 If the embedding model or dimensions change, recreate the Qdrant collection and
 reindex the selected schemas.
@@ -287,6 +336,10 @@ Compose configuration. Dependabot tracks NuGet, Docker, and GitHub Actions.
   functions are not supported.
 - Reindexing replaces the selected source's existing Qdrant documents.
 - Schema changes require manual reindexing.
+- The cache fingerprint covers the whole table allow-list, so re-indexing one
+  changed table retires every cache entry for that source.
+- A similarity threshold is a heuristic: too low reuses SQL written for a
+  different question, too high rarely hits. Tune it against real questions.
 - There is no authentication, audit store, query-cost estimation, sensitive
   column policy, metadata cache, or automatic model evaluation.
 - Health reporting is process liveness, not dependency readiness.
@@ -295,6 +348,8 @@ Compose configuration. Dependabot tracks NuGet, Docker, and GitHub Actions.
 ## Key design decisions
 
 - RAG narrows a large schema; it does not generate SQL.
+- The semantic cache reuses statements, never result rows, so a cache hit costs
+  correctness nothing—it only skips work.
 - The LLM handles semantic translation, while the backend owns policy and access.
 - Source identity flows through discovery, indexing, retrieval, validation, and
   execution to prevent cross-database confusion.

@@ -597,6 +597,10 @@ kbd {
   font-size: 0.9rem;
 }
 
+.metrics dd.cached {
+  color: var(--accent-strong);
+}
+
 .result-block {
   padding: 26px clamp(24px, 5vw, 42px);
   border-bottom: 1px solid var(--border);

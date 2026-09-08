@@ -65,6 +65,8 @@ public static class ServiceCollectionExtensions
             ConfigureOllamaClient);
         services.AddHttpClient<ISchemaVectorStore, QdrantSchemaVectorStore>(
             ConfigureQdrantClient);
+        services.AddSingleton(TimeProvider.System);
+        services.AddSemanticQueryCache(configuration);
 
         services.AddSingleton(serviceProvider =>
         {
@@ -94,6 +96,29 @@ public static class ServiceCollectionExtensions
         services.AddScoped<SchemaIndexingService>();
 
         return services;
+    }
+
+    /// <summary>
+    /// The cache only earns its place when Qdrant is reachable, so switching it
+    /// off swaps in a no-op implementation instead of leaving the query pipeline
+    /// with an optional dependency to check.
+    /// </summary>
+    private static void AddSemanticQueryCache(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var isEnabled = configuration
+            .GetSection(SemanticCacheOptions.SectionName)
+            .GetValue("Enabled", defaultValue: new SemanticCacheOptions().Enabled);
+
+        if (!isEnabled)
+        {
+            services.AddSingleton<ISemanticQueryCache, NullSemanticQueryCache>();
+            return;
+        }
+
+        services.AddHttpClient<ISemanticQueryCache, QdrantSemanticQueryCache>(
+            ConfigureQdrantClient);
     }
 
     private static void AddValidatedOptions(
@@ -151,6 +176,24 @@ public static class ServiceCollectionExtensions
                 "Qdrant:CollectionName may contain only letters, digits, underscores, and hyphens.")
             .Validate(options => options.RequestTimeoutSeconds is >= 1 and <= 120,
                 "Qdrant:RequestTimeoutSeconds must be between 1 and 120.")
+            .ValidateOnStart();
+
+        var schemaCollectionName = configuration
+            .GetSection(QdrantOptions.SectionName)
+            .GetValue("CollectionName", defaultValue: new QdrantOptions().CollectionName)!;
+        services.AddOptions<SemanticCacheOptions>()
+            .Bind(configuration.GetSection(SemanticCacheOptions.SectionName))
+            .Validate(options => IsSafeCollectionName(options.CollectionName),
+                "SemanticCache:CollectionName may contain only letters, digits, underscores, and hyphens.")
+            .Validate(options => !string.Equals(
+                    options.CollectionName,
+                    schemaCollectionName,
+                    StringComparison.OrdinalIgnoreCase),
+                "SemanticCache:CollectionName must differ from Qdrant:CollectionName.")
+            .Validate(options => options.SimilarityThreshold is > 0 and <= 1,
+                "SemanticCache:SimilarityThreshold must be greater than 0 and at most 1.")
+            .Validate(options => options.TimeToLiveMinutes is >= 0 and <= 43200,
+                "SemanticCache:TimeToLiveMinutes must be between 0 and 43200.")
             .ValidateOnStart();
 
         services.AddOptions<RagOptions>()

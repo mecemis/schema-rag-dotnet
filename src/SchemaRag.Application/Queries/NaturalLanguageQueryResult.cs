@@ -7,4 +7,6 @@ public sealed record NaturalLanguageQueryResult(
     string GeneratedSql,
     IReadOnlyList<string> Columns,
     IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows,
-    long ExecutionTimeMs);
+    long ExecutionTimeMs,
+    bool FromSemanticCache = false,
+    double? CacheSimilarity = null);

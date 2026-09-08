@@ -178,6 +178,37 @@ public sealed class ApiEndpointTests
         Assert.Equal("SELECT name FROM public.customers LIMIT 5", body.GetProperty("generatedSql").GetString());
         Assert.Equal("name", body.GetProperty("columns")[0].GetString());
         Assert.Equal("Ada", body.GetProperty("rows")[0].GetProperty("name").GetString());
+        Assert.False(body.GetProperty("fromSemanticCache").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("cacheSimilarity").ValueKind);
+        Assert.Single(factory.SemanticQueryCache.StoredEntries);
+    }
+
+    [Fact]
+    public async Task Query_WhenTheSemanticCacheAnswers_ReportsTheReusedStatement()
+    {
+        await using var factory = new SchemaRagApiFactory("SELECT 1 LIMIT 1");
+        factory.SemanticQueryCache.Hit = new SemanticCacheHit(
+            "List customer names",
+            "SELECT name FROM public.customers LIMIT 5",
+            [SchemaTableIdentity.CreateId("demo", "public", "customers")],
+            0.98);
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/query",
+            new { question = "Show customer names" },
+            CancellationToken.None);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(body.GetProperty("fromSemanticCache").GetBoolean());
+        Assert.Equal(0.98, body.GetProperty("cacheSimilarity").GetDouble());
+        Assert.Equal(
+            "SELECT name FROM public.customers LIMIT 5",
+            body.GetProperty("generatedSql").GetString());
+        Assert.Equal(0, factory.VectorStore.SearchCallCount);
+        Assert.Empty(factory.SemanticQueryCache.StoredEntries);
     }
 
     [Fact]
@@ -202,6 +233,7 @@ public sealed class ApiEndpointTests
         public RecordingQueryExecutor QueryExecutor { get; } = new();
         public StubSchemaCatalog SchemaCatalog { get; } = new();
         public StubSchemaVectorStore VectorStore { get; } = new();
+        public RecordingSemanticQueryCache SemanticQueryCache { get; } = new();
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -225,6 +257,7 @@ public sealed class ApiEndpointTests
                 services.RemoveAll<IChatCompletionService>();
                 services.RemoveAll<ISchemaVectorStore>();
                 services.RemoveAll<IGeneratedQueryExecutor>();
+                services.RemoveAll<ISemanticQueryCache>();
                 services.AddSingleton<IDataSourceRegistry>(new StubDataSourceRegistry());
                 services.AddSingleton<ISchemaCatalog>(SchemaCatalog);
                 services.AddSingleton<IEmbeddingService>(new StubEmbeddingService());
@@ -232,7 +265,24 @@ public sealed class ApiEndpointTests
                     new StubChatCompletionService(generatedSql));
                 services.AddSingleton<ISchemaVectorStore>(VectorStore);
                 services.AddSingleton<IGeneratedQueryExecutor>(QueryExecutor);
+                services.AddSingleton<ISemanticQueryCache>(SemanticQueryCache);
             });
+        }
+    }
+
+    public sealed class RecordingSemanticQueryCache : ISemanticQueryCache
+    {
+        public SemanticCacheHit? Hit { get; set; }
+        public List<SemanticCacheEntry> StoredEntries { get; } = [];
+
+        public Task<SemanticCacheHit?> FindAsync(
+            SemanticCacheLookup lookup,
+            CancellationToken cancellationToken) => Task.FromResult(Hit);
+
+        public Task StoreAsync(SemanticCacheEntry entry, CancellationToken cancellationToken)
+        {
+            StoredEntries.Add(entry);
+            return Task.CompletedTask;
         }
     }
 
@@ -300,14 +350,18 @@ public sealed class ApiEndpointTests
 
         public string? LastReplaceDataSourceId { get; private set; }
         public IReadOnlyList<SchemaVector>? LastVectors { get; private set; }
+        public int SearchCallCount { get; private set; }
 
         public Task<IReadOnlyList<SchemaDocument>> SearchAsync(
             string dataSourceId,
             IReadOnlyCollection<string> allowedTableIds,
             float[] embedding,
             int limit,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<SchemaDocument>>([CustomerSchema]);
+            CancellationToken cancellationToken)
+        {
+            SearchCallCount++;
+            return Task.FromResult<IReadOnlyList<SchemaDocument>>([CustomerSchema]);
+        }
 
         public Task ReplaceAsync(
             string dataSourceId,

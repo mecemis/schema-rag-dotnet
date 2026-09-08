@@ -43,10 +43,12 @@ public static class QueryEndpoints
             request.TableIds,
             cancellationToken);
         logger.LogInformation(
-            "Natural-language query completed for {DataSourceId} using {SchemaCount} schemas in {ExecutionTimeMs} ms.",
+            "Natural-language query completed for {DataSourceId} using {SchemaCount} schemas " +
+            "in {ExecutionTimeMs} ms (semantic cache hit: {FromSemanticCache}).",
             result.DataSourceId,
             result.RetrievedTables.Count,
-            result.ExecutionTimeMs);
+            result.ExecutionTimeMs,
+            result.FromSemanticCache);
         return Results.Ok(result);
     }
 
